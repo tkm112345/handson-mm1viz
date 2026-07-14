@@ -4,17 +4,12 @@ go 1.24.11
 
 require (
 	fyne.io/fyne/v2 v2.8.0
-	gonum.org/v1/plot v0.17.0
+	git.sr.ht/~sbinet/gg v0.7.0
 )
 
 require (
-	codeberg.org/go-fonts/liberation v0.5.0 // indirect
-	codeberg.org/go-latex/latex v0.2.0 // indirect
-	codeberg.org/go-pdf/fpdf v0.11.1 // indirect
 	fyne.io/systray v1.12.2 // indirect
-	git.sr.ht/~sbinet/gg v0.7.0 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect
-	github.com/ajstarks/svgo v0.0.0-20211024235047-1546f124cd8b // indirect
 	github.com/anthonynsimon/bild v0.14.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"image"
-	"image/color"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -11,119 +10,138 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
-	"gonum.org/v1/plot"
-	"gonum.org/v1/plot/plotter"
-	"gonum.org/v1/plot/vg"
-	"gonum.org/v1/plot/vg/draw"
-	"gonum.org/v1/plot/vg/vgimg"
+	"git.sr.ht/~sbinet/gg"
 )
 
-// ---- 1. M/M/1 の計算 ----
+// ---- 1. M/M/1 の計算（Ts を入力にする）----
 
-// MetricsはM/M/1の各指標をまとめた構造体
 type Metrics struct {
-	Rho float64 // 利用率 ρ
-	Wq float64 // 平均待ち時間
-	W float64 // 平均応答時間
-	Stable bool // ρ<1 なら true
+	Rho    float64 // 利用率 ρ = λ·Ts
+	Tw     float64 // 平均待ち時間
+	Ts     float64 // 平均サービス時間（入力）
+	W      float64 // 平均応答時間 = Tw + Ts
+	Stable bool
 }
 
-// metrics は到着率 lambda・サービス率 mu から指標を計算する
-func metrics(lambda, mu float64) Metrics {
-	rho := lambda / mu
+func metrics(lambda, ts float64) Metrics {
+	rho := lambda * ts // ρ = λ/μ = λ·Ts
 	if rho >= 1 {
-		return Metrics{Rho: rho, Stable: false}
+		return Metrics{Rho: rho, Ts: ts, Stable: false}
 	}
-	ts := 1 / mu
-	wq := rho / (1 - rho) * ts
-	w := ts / ( 1 - rho)
-	return Metrics{Rho: rho, Wq : wq, W: w, Stable: true}
+	tw := rho / (1 - rho) * ts // Tw = ρ/(1-ρ)·Ts
+	return Metrics{Rho: rho, Tw: tw, Ts: ts, W: tw + ts, Stable: true}
 }
 
-// ---- 2. グラフを画像として生成 ----
-// renderPlot は Wq-ρ 曲線と現在点を描き、image.Image で返す
-func renderPlot(lambda, mu float64) image.Image {
-	p := plot.New()
-	p.Title.Text = "M/M/1 Queue: Wq vs ρ"
-	p.X.Label.Text = "ρ (Utilization)"
-	p.Y.Label.Text = "Wq (Average Waiting Time)"
-	p.X.Min, p.X.Max = 0,1
-	p.Y.Min = 0
+// ---- 2. 時間バーを画像として描く ----
+// 四角1個 = サービス1回分(Ts)。待ち Tw を「Ts 何個分か」で並べる。
 
-	ts := 1 / mu
+func renderBar(lambda, ts float64) image.Image {
+	const CW, CH = 560, 160
+	dc := gg.NewContext(CW, CH)
+	dc.SetRGB(1, 1, 1)
+	dc.Clear()
 
-	// 曲線：ρ=0〜0.95 を刻んで Wq を計算
-	pts := make(plotter.XYs, 0,96)
-	for i := 0; i <= 95; i++ {
-		rho := float64(i) / 100.0
-		pts = append(pts, plotter.XY{X: rho, Y: rho / (1 - rho) * ts})
-	}
-	line, _ := plotter.NewLine(pts)
-	line.Color = color.RGBA{R: 255, G: 0, B: 0, A: 255}
-	line.Width = vg.Points(2)
-	p.Add(line)
+	m := metrics(lambda, ts)
 
-	// 現在点（安定時だけ赤丸で表示）
-	m := metrics(lambda, mu)
-	if m.Stable {
-		cur, _ := plotter.NewScatter(plotter.XYs{{X: m.Rho, Y: m.Wq}})
-		cur.GlyphStyle.Color = color.RGBA{R: 255, A: 255}
-		cur.GlyphStyle.Radius = vg.Points(5)
-		cur.GlyphStyle.Shape = draw.CircleGlyph{}
-		p.Add(cur)
+	x0, y, h, u := 20.0, 60.0, 44.0, 52.0 // u = 四角1個の幅(=Ts)
+	maxUnits := 8.0                       // 表示できる最大個数
+
+	// 不安定なら赤帯で警告して終了
+	if !m.Stable {
+		dc.SetRGB(0.85, 0.2, 0.2)
+		dc.DrawRectangle(x0, y, CW-2*x0, h)
+		dc.Fill()
+		dc.SetRGB(1, 1, 1)
+		dc.DrawStringAnchored("UNSTABLE (rho >= 1): queue grows forever",
+			CW/2, y+h/2, 0.5, 0.5)
+		return dc.Image()
 	}
 
-	// plot → image.Image へ変換（ここが Fyne との橋渡し）
-	c:= vgimg.New(vg.Points(500), vg.Points(300))
-	p.Draw(draw.New(c))
-	return c.Image()
+	waitUnits := m.Rho / (1 - m.Rho) // = Tw / Ts（待ちは「サービス何個分」か）
+	drawUnits := waitUnits
+	overflow := false
+	if drawUnits > maxUnits {
+		drawUnits = maxUnits
+		overflow = true
+	}
+
+	// 待ち時間（オレンジ）。四角ごとに白い区切り線で「■の並び」に見せる
+	dc.SetRGB(0.95, 0.6, 0.15)
+	dc.DrawRectangle(x0, y, drawUnits*u, h)
+	dc.Fill()
+	dc.SetRGB(1, 1, 1)
+	dc.SetLineWidth(1)
+	for i := 1.0; i < drawUnits; i++ {
+		dc.DrawLine(x0+i*u, y, x0+i*u, y+h)
+		dc.Stroke()
+	}
+	xEnd := x0 + drawUnits*u
+	if overflow {
+		dc.SetRGB(0, 0, 0)
+		dc.DrawStringAnchored(">>", xEnd+6, y+h/2, 0, 0.5)
+		xEnd += 22
+	}
+
+	// サービス（緑）= 四角1個
+	dc.SetRGB(0.2, 0.7, 0.3)
+	dc.DrawRectangle(xEnd, y, u, h)
+	dc.Fill()
+
+	// ラベル
+	dc.SetRGB(0, 0, 0)
+	dc.DrawStringAnchored("WAIT (Tw)", x0, y-10, 0, 0.5)
+	dc.DrawStringAnchored("SERVICE (Ts)", xEnd, y-10, 0, 0.5)
+	dc.DrawString(fmt.Sprintf(
+		"Tw = %.2f  =  %.1f x Ts     Ts = %.2f     total W = %.2f     rho = %.2f",
+		m.Tw, waitUnits, m.Ts, m.W, m.Rho), x0, y+h+24)
+	dc.DrawString("each square = one service time (Ts)", x0, y+h+44)
+
+	return dc.Image()
 }
 
 // ---- 3. GUI 組み立て ----
+
 func main() {
 	a := app.New()
-	w := a.NewWindow("M/M/1 Queue Visualizer")
+	w := a.NewWindow("M/M/1 Waiting Time Visualizer")
 
-	// グラフ表示用の画像部品
-	graph := canvas.NewImageFromImage(nil)
-	graph.FillMode = canvas.ImageFillContain
-	graph.SetMinSize(fyne.NewSize(500, 300))
+	view := canvas.NewImageFromImage(nil)
+	view.FillMode = canvas.ImageFillContain
+	view.SetMinSize(fyne.NewSize(560, 160))
 
-	// 数値表示用ラベル
 	info := widget.NewLabel("")
 
-	// スライダー2本
-	lambda := widget.NewSlider(0.1,9.0)
+	lambda := widget.NewSlider(0.1, 8.0)
 	lambda.Step = 0.1
 	lambda.Value = 3.0
 
-	mu := widget.NewSlider(0.1,10.0)
-	mu.Step = 0.1
-	mu.Value = 5.0
+	ts := widget.NewSlider(0.05, 1.0)
+	ts.Step = 0.05
+	ts.Value = 0.2
 
-	// 再計算
-	refresh := func(){
-		l,u := lambda.Value,mu.Value
-		m := metrics(l,u)
-		graph.Image = renderPlot(l,u)
-		graph.Refresh()
+	refresh := func() {
+		l, s := lambda.Value, ts.Value
+		m := metrics(l, s)
+		view.Image = renderBar(l, s)
+		view.Refresh()
 		if m.Stable {
-			info.SetText(fmt.Sprintf("λ=%.2f, μ=%.2f, ρ=%.2f, Wq=%.2f, W=%.2f", l,u,m.Rho,m.Wq,m.W))
+			info.SetText(fmt.Sprintf("lambda=%.1f  Ts=%.2f  ->  rho=%.2f,  Tw=%.2f,  W=%.2f",
+				l, s, m.Rho, m.Tw, m.W))
 		} else {
-			info.SetText(fmt.Sprintf("λ=%.2f, μ=%.2f, ρ=%.2f (Unstable)", l,u,m.Rho))
+			info.SetText(fmt.Sprintf("lambda=%.1f  Ts=%.2f  ->  rho=%.2f  UNSTABLE",
+				l, s, m.Rho))
 		}
 	}
-	lambda.OnChanged = func(float64){refresh()}
-	mu.OnChanged = func(float64){refresh()}
+	lambda.OnChanged = func(float64) { refresh() }
+	ts.OnChanged = func(float64) { refresh() }
 
-	// レイアウト：・中央にグラフ
 	form := container.NewVBox(
 		widget.NewLabel("lambda (arrival rate)"), lambda,
-		widget.NewLabel("mu (arrival rate)"), mu,
+		widget.NewLabel("Ts (mean service time)"), ts,
 		info,
 	)
-	w.SetContent(container.NewBorder(nil, form, nil, nil, graph))
-	w.Resize(fyne.NewSize(560, 480))
+	w.SetContent(container.NewBorder(nil, form, nil, nil, view))
+	w.Resize(fyne.NewSize(600, 420))
 
 	refresh()
 	w.ShowAndRun()
