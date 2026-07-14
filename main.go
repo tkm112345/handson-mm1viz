@@ -111,6 +111,11 @@ func main() {
 
 	info := widget.NewLabel("")
 
+	// 数式の補足（常時表示）
+	formula := widget.NewLabel(
+		"rho = lambda / mu = lambda * Ts   ( mu = 1/Ts )\n" +
+			"Tw = rho/(1-rho) * Ts        W = Tw + Ts")
+
 	lambda := widget.NewSlider(0.1, 8.0)
 	lambda.Step = 0.1
 	lambda.Value = 3.0
@@ -139,6 +144,8 @@ func main() {
 		widget.NewLabel("lambda (arrival rate)"), lambda,
 		widget.NewLabel("Ts (mean service time)"), ts,
 		info,
+		widget.NewSeparator(),
+		formula,
 	)
 	w.SetContent(container.NewBorder(nil, form, nil, nil, view))
 	w.Resize(fyne.NewSize(600, 420))
